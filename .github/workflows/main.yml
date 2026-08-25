@@ -1,0 +1,159 @@
+name: Build Fantacalcio Battitore
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+jobs:
+
+  build:
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        include:
+
+          - name: windows-x64
+            os: windows-latest
+            artifact: FantacalcioBattitore-windows-x64.zip
+
+          - name: linux-x64
+            os: ubuntu-latest
+            artifact: FantacalcioBattitore-linux-x64.tar.gz
+
+          - name: macos-arm64
+            os: macos-15
+            artifact: FantacalcioBattitore-macos-arm64.zip
+
+          - name: macos-x64
+            os: macos-15-intel
+            artifact: FantacalcioBattitore-macos-x64.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Show environment
+        shell: bash
+        run: |
+          java -version
+          mvn -version
+          uname -a || true
+
+      - name: Build Maven
+        shell: bash
+        run: |
+          mvn --batch-mode clean package
+
+      - name: Prepare jpackage input
+        shell: bash
+        run: |
+          mkdir -p target/package-input
+
+          mvn --batch-mode dependency:copy-dependencies \
+            -DincludeScope=runtime \
+            -DoutputDirectory=package-input
+
+          cp target/*.jar target/package-input/
+
+      - name: Find main jar
+        id: jar
+        shell: bash
+        run: |
+          MAIN_JAR=$(find target/package-input \
+            -maxdepth 1 \
+            -name "FantacalcioBattitore*.jar" \
+            | head -1)
+
+          MAIN_JAR=$(basename "$MAIN_JAR")
+
+          echo "mainjar=$MAIN_JAR" >> "$GITHUB_OUTPUT"
+
+          echo "Main jar: $MAIN_JAR"
+
+      - name: Create portable application
+        shell: bash
+        run: |
+          mkdir -p target/dist
+
+          jpackage \
+            --type app-image \
+            --name FantacalcioBattitore \
+            --input target/package-input \
+            --main-jar "${{ steps.jar.outputs.mainjar }}" \
+            --main-class it.fantacalcio.battitore.Launcher \
+            --dest target/dist \
+            --app-version 1.0.0
+
+      #
+      # WINDOWS
+      #
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "target/dist/FantacalcioBattitore" `
+            -DestinationPath "target/${{ matrix.artifact }}"
+
+      #
+      # LINUX
+      #
+
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cd target/dist
+
+          tar -czf \
+            "../${{ matrix.artifact }}" \
+            FantacalcioBattitore
+
+      #
+      # MAC
+      #
+
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cd target/dist
+
+          ditto \
+            -c \
+            -k \
+            --sequesterRsrc \
+            --keepParent \
+            "FantacalcioBattitore.app" \
+            "../${{ matrix.artifact }}"
+
+      #
+      # UPLOAD
+      #
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: target/${{ matrix.artifact }}
+          archive: false
