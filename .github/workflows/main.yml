@@ -99,7 +99,7 @@ jobs:
             --name FantacalcioBattitore \
             --input target/package-input \
             --main-jar "${{ steps.jar.outputs.mainjar }}" \
-            --main-class it.fantacalcio.battitore.Launcher \
+            --main-class it.fantacalcio.battitore.Main \
             --dest target/dist \
             --app-version 1.0.0
 
