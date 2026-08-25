@@ -7,10 +7,6 @@ on:
     branches:
       - main
 
-  pull_request:
-    branches:
-      - main
-
 jobs:
 
   build:
@@ -44,35 +40,77 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Java
+      - name: Setup Java 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
 
-      - name: Show environment
+      - name: Environment
         shell: bash
         run: |
           java -version
           mvn -version
-          uname -a || true
 
-      - name: Build Maven
+      # ----------------------------
+      # MAVEN BUILD
+      # ----------------------------
+
+      - name: Build
         shell: bash
         run: |
           mvn --batch-mode clean package
 
+      # ----------------------------
+      # JPACKAGE INPUT
+      # ----------------------------
+
       - name: Prepare jpackage input
         shell: bash
         run: |
+          rm -rf target/package-input
           mkdir -p target/package-input
 
           mvn --batch-mode dependency:copy-dependencies \
             -DincludeScope=runtime \
-            -DoutputDirectory=package-input
+            -DoutputDirectory=target/package-input
 
-          cp target/*.jar target/package-input/
+          cp target/FantacalcioBattitore-*.jar \
+             target/package-input/
+
+          echo
+          echo "===== JPACKAGE INPUT ====="
+
+          ls -lah target/package-input
+
+      # ----------------------------
+      # VERIFY JAVAFX
+      # ----------------------------
+
+      - name: Verify JavaFX dependencies
+        shell: bash
+        run: |
+          echo "Checking JavaFX..."
+
+          find target/package-input \
+            -maxdepth 1 \
+            -iname "javafx-*.jar" \
+            -print
+
+          COUNT=$(find target/package-input \
+            -maxdepth 1 \
+            -iname "javafx-*.jar" \
+            | wc -l)
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "ERROR: JavaFX dependencies missing!"
+            exit 1
+          fi
+
+      # ----------------------------
+      # FIND MAIN JAR
+      # ----------------------------
 
       - name: Find main jar
         id: jar
@@ -80,16 +118,38 @@ jobs:
         run: |
           MAIN_JAR=$(find target/package-input \
             -maxdepth 1 \
-            -name "FantacalcioBattitore*.jar" \
+            -name "FantacalcioBattitore-*.jar" \
             | head -1)
+
+          if [ -z "$MAIN_JAR" ]; then
+            echo "Main JAR not found!"
+            exit 1
+          fi
 
           MAIN_JAR=$(basename "$MAIN_JAR")
 
           echo "mainjar=$MAIN_JAR" >> "$GITHUB_OUTPUT"
 
-          echo "Main jar: $MAIN_JAR"
+          echo "Main JAR: $MAIN_JAR"
 
-      - name: Create portable application
+      # ----------------------------
+      # VERIFY LAUNCHER
+      # ----------------------------
+
+      - name: Verify Launcher
+        shell: bash
+        run: |
+          jar tf \
+            "target/package-input/${{ steps.jar.outputs.mainjar }}" \
+            | grep \
+            "it/fantacalcio/battitore/Launcher.class"
+
+      # ----------------------------
+      # JPACKAGE
+      # ----------------------------
+
+      - name: Create application image - Windows
+        if: runner.os == 'Windows'
         shell: bash
         run: |
           mkdir -p target/dist
@@ -101,11 +161,70 @@ jobs:
             --main-jar "${{ steps.jar.outputs.mainjar }}" \
             --main-class it.fantacalcio.battitore.Launcher \
             --dest target/dist \
-            --app-version 1.0.0
+            --app-version 1.0.0 \
+            --win-console \
+            --verbose
 
-      #
-      # WINDOWS
-      #
+      - name: Create application image - Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p target/dist
+
+          jpackage \
+            --type app-image \
+            --name FantacalcioBattitore \
+            --input target/package-input \
+            --main-jar "${{ steps.jar.outputs.mainjar }}" \
+            --main-class it.fantacalcio.battitore.Launcher \
+            --dest target/dist \
+            --app-version 1.0.0 \
+            --verbose
+
+      # ----------------------------
+      # SHOW PACKAGE
+      # ----------------------------
+
+      - name: Show generated package
+        shell: bash
+        run: |
+          find target/dist -maxdepth 3 -type f | head -100
+
+      # ----------------------------
+      # WINDOWS SMOKE TEST
+      # ----------------------------
+
+      - name: Test Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = "target\dist\FantacalcioBattitore\FantacalcioBattitore.exe"
+
+          if (-not (Test-Path $exe)) {
+              throw "Executable not found: $exe"
+          }
+
+          Write-Host "Testing $exe"
+
+          $process = Start-Process `
+              -FilePath $exe `
+              -PassThru
+
+          Start-Sleep -Seconds 5
+
+          if ($process.HasExited) {
+              if ($process.ExitCode -ne 0) {
+                  throw "Application exited with code $($process.ExitCode)"
+              }
+          }
+          else {
+              Write-Host "Application started successfully."
+              Stop-Process -Id $process.Id -Force
+          }
+
+      # ----------------------------
+      # WINDOWS ZIP
+      # ----------------------------
 
       - name: Package Windows
         if: runner.os == 'Windows'
@@ -115,9 +234,9 @@ jobs:
             -Path "target/dist/FantacalcioBattitore" `
             -DestinationPath "target/${{ matrix.artifact }}"
 
-      #
+      # ----------------------------
       # LINUX
-      #
+      # ----------------------------
 
       - name: Package Linux
         if: runner.os == 'Linux'
@@ -129,9 +248,9 @@ jobs:
             "../${{ matrix.artifact }}" \
             FantacalcioBattitore
 
-      #
+      # ----------------------------
       # MAC
-      #
+      # ----------------------------
 
       - name: Package macOS
         if: runner.os == 'macOS'
@@ -144,16 +263,15 @@ jobs:
             -k \
             --sequesterRsrc \
             --keepParent \
-            "FantacalcioBattitore.app" \
+            FantacalcioBattitore.app \
             "../${{ matrix.artifact }}"
 
-      #
+      # ----------------------------
       # UPLOAD
-      #
+      # ----------------------------
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: target/${{ matrix.artifact }}
-          archive: false
