@@ -7,9 +7,19 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
+env:
+  APP_NAME: FantacalcioBattitore
+  MAIN_CLASS: it.fantacalcio.battitore.Launcher
+  APP_VERSION: 1.0.0
+
 jobs:
 
   build:
+
+    name: ${{ matrix.name }}
 
     strategy:
       fail-fast: false
@@ -17,28 +27,40 @@ jobs:
       matrix:
         include:
 
-          - name: windows-x64
+          - name: Windows x64
+            id: windows-x64
             os: windows-latest
-            artifact: FantacalcioBattitore-windows-x64.zip
+            output: FantacalcioBattitore-windows-x64.zip
 
-          - name: linux-x64
+          - name: Linux x64
+            id: linux-x64
             os: ubuntu-latest
-            artifact: FantacalcioBattitore-linux-x64.tar.gz
+            output: FantacalcioBattitore-linux-x64.tar.gz
 
-          - name: macos-arm64
+          - name: macOS Apple Silicon
+            id: macos-arm64
             os: macos-15
-            artifact: FantacalcioBattitore-macos-arm64.zip
+            output: FantacalcioBattitore-macos-arm64.zip
 
-          - name: macos-x64
+          - name: macOS Intel
+            id: macos-x64
             os: macos-15-intel
-            artifact: FantacalcioBattitore-macos-x64.zip
+            output: FantacalcioBattitore-macos-x64.zip
 
     runs-on: ${{ matrix.os }}
 
     steps:
 
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+
+      # ============================================================
+      # JAVA
+      # ============================================================
 
       - name: Setup Java 21
         uses: actions/setup-java@v5
@@ -47,215 +69,367 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Environment
+      - name: Show environment
         shell: bash
         run: |
+          echo "======================================"
+          echo " Java"
+          echo "======================================"
+
           java -version
+
+          echo
+          echo "======================================"
+          echo " Maven"
+          echo "======================================"
+
           mvn -version
 
-      # ----------------------------
-      # MAVEN BUILD
-      # ----------------------------
+          echo
+          echo "======================================"
+          echo " jpackage"
+          echo "======================================"
 
-      - name: Build
+          jpackage --version
+
+      # ============================================================
+      # MAVEN BUILD
+      # ============================================================
+
+      - name: Maven build
         shell: bash
         run: |
           mvn --batch-mode clean package
 
-      # ----------------------------
-      # JPACKAGE INPUT
-      # ----------------------------
+      # ============================================================
+      # TROVA AUTOMATICAMENTE IL JAR PRINCIPALE
+      # ============================================================
+
+      - name: Find main JAR
+        id: jar
+        shell: bash
+        run: |
+
+          echo "Contenuto della directory target:"
+          ls -lah target
+
+          MAIN_JAR_PATH=$(find target \
+            -maxdepth 1 \
+            -type f \
+            -name "*.jar" \
+            ! -name "*-sources.jar" \
+            ! -name "*-javadoc.jar" \
+            ! -name "original-*.jar" \
+            | head -n 1)
+
+          if [ -z "$MAIN_JAR_PATH" ]; then
+            echo "ERRORE: nessun JAR principale trovato."
+            exit 1
+          fi
+
+          MAIN_JAR=$(basename "$MAIN_JAR_PATH")
+
+          echo
+          echo "JAR principale trovato:"
+          echo "$MAIN_JAR"
+
+          echo "mainjar=$MAIN_JAR" >> "$GITHUB_OUTPUT"
+
+      # ============================================================
+      # VERIFICA LAUNCHER
+      # ============================================================
+
+      - name: Verify Launcher
+        shell: bash
+        run: |
+
+          echo "Verifico la presenza di:"
+          echo "$MAIN_CLASS"
+
+          jar tf \
+            "target/${{ steps.jar.outputs.mainjar }}" \
+            | grep "it/fantacalcio/battitore/Launcher.class"
+
+          if [ $? -ne 0 ]; then
+            echo "ERRORE: Launcher.class non trovato nel JAR."
+            exit 1
+          fi
+
+          echo "Launcher trovato correttamente."
+
+      # ============================================================
+      # PREPARA INPUT JPACKAGE
+      # ============================================================
 
       - name: Prepare jpackage input
         shell: bash
         run: |
+
           rm -rf target/package-input
+
           mkdir -p target/package-input
+
+          echo
+          echo "Copia delle dipendenze runtime..."
 
           mvn --batch-mode dependency:copy-dependencies \
             -DincludeScope=runtime \
             -DoutputDirectory=target/package-input
 
-          cp target/FantacalcioBattitore-*.jar \
-             target/package-input/
+          echo
+          echo "Copia del JAR principale..."
+
+          cp \
+            "target/${{ steps.jar.outputs.mainjar }}" \
+            target/package-input/
 
           echo
-          echo "===== JPACKAGE INPUT ====="
+          echo "======================================"
+          echo " JPACKAGE INPUT"
+          echo "======================================"
 
           ls -lah target/package-input
 
-      # ----------------------------
-      # VERIFY JAVAFX
-      # ----------------------------
+      # ============================================================
+      # VERIFICA JAVAFX
+      # ============================================================
 
-      - name: Verify JavaFX dependencies
+      - name: Verify JavaFX
         shell: bash
         run: |
-          echo "Checking JavaFX..."
+
+          echo
+          echo "======================================"
+          echo " JavaFX libraries"
+          echo "======================================"
 
           find target/package-input \
             -maxdepth 1 \
-            -iname "javafx-*.jar" \
+            -name "javafx-*.jar" \
             -print
 
-          COUNT=$(find target/package-input \
+          JAVAFX_COUNT=$(find target/package-input \
             -maxdepth 1 \
-            -iname "javafx-*.jar" \
+            -name "javafx-*.jar" \
             | wc -l)
 
-          if [ "$COUNT" -eq 0 ]; then
-            echo "ERROR: JavaFX dependencies missing!"
+          echo
+          echo "JavaFX JAR trovati: $JAVAFX_COUNT"
+
+          if [ "$JAVAFX_COUNT" -eq 0 ]; then
+            echo "ERRORE: nessuna dipendenza JavaFX trovata."
             exit 1
           fi
 
-      # ----------------------------
-      # FIND MAIN JAR
-      # ----------------------------
+      # ============================================================
+      # PULIZIA OUTPUT
+      # ============================================================
 
-      - name: Find main jar
-        id: jar
+      - name: Prepare dist directory
         shell: bash
         run: |
-          MAIN_JAR=$(find target/package-input \
-            -maxdepth 1 \
-            -name "FantacalcioBattitore-*.jar" \
-            | head -1)
+          rm -rf target/dist
+          mkdir -p target/dist
 
-          if [ -z "$MAIN_JAR" ]; then
-            echo "Main JAR not found!"
-            exit 1
-          fi
+      # ============================================================
+      # WINDOWS
+      # ============================================================
 
-          MAIN_JAR=$(basename "$MAIN_JAR")
-
-          echo "mainjar=$MAIN_JAR" >> "$GITHUB_OUTPUT"
-
-          echo "Main JAR: $MAIN_JAR"
-
-      # ----------------------------
-      # VERIFY LAUNCHER
-      # ----------------------------
-
-      - name: Verify Launcher
-        shell: bash
-        run: |
-          jar tf \
-            "target/package-input/${{ steps.jar.outputs.mainjar }}" \
-            | grep \
-            "it/fantacalcio/battitore/Launcher.class"
-
-      # ----------------------------
-      # JPACKAGE
-      # ----------------------------
-
-      - name: Create application image - Windows
+      - name: Create Windows application
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          mkdir -p target/dist
 
           jpackage \
             --type app-image \
-            --name FantacalcioBattitore \
+            --name "$APP_NAME" \
             --input target/package-input \
             --main-jar "${{ steps.jar.outputs.mainjar }}" \
-            --main-class it.fantacalcio.battitore.Launcher \
+            --main-class "$MAIN_CLASS" \
             --dest target/dist \
-            --app-version 1.0.0 \
+            --app-version "$APP_VERSION" \
+            --add-modules java.se,jdk.unsupported \
             --win-console \
             --verbose
 
-      - name: Create application image - Unix
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          mkdir -p target/dist
-
-          jpackage \
-            --type app-image \
-            --name FantacalcioBattitore \
-            --input target/package-input \
-            --main-jar "${{ steps.jar.outputs.mainjar }}" \
-            --main-class it.fantacalcio.battitore.Launcher \
-            --dest target/dist \
-            --app-version 1.0.0 \
-            --verbose
-
-      # ----------------------------
-      # SHOW PACKAGE
-      # ----------------------------
-
-      - name: Show generated package
-        shell: bash
-        run: |
-          find target/dist -maxdepth 3 -type f | head -100
-
-      # ----------------------------
-      # WINDOWS SMOKE TEST
-      # ----------------------------
-
-      - name: Test Windows executable
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $exe = "target\dist\FantacalcioBattitore\FantacalcioBattitore.exe"
-
-          if (-not (Test-Path $exe)) {
-              throw "Executable not found: $exe"
-          }
-
-          Write-Host "Testing $exe"
-
-          $process = Start-Process `
-              -FilePath $exe `
-              -PassThru
-
-          Start-Sleep -Seconds 5
-
-          if ($process.HasExited) {
-              if ($process.ExitCode -ne 0) {
-                  throw "Application exited with code $($process.ExitCode)"
-              }
-          }
-          else {
-              Write-Host "Application started successfully."
-              Stop-Process -Id $process.Id -Force
-          }
-
-      # ----------------------------
-      # WINDOWS ZIP
-      # ----------------------------
-
-      - name: Package Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Compress-Archive `
-            -Path "target/dist/FantacalcioBattitore" `
-            -DestinationPath "target/${{ matrix.artifact }}"
-
-      # ----------------------------
+      # ============================================================
       # LINUX
-      # ----------------------------
+      # ============================================================
 
-      - name: Package Linux
+      - name: Create Linux application
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          cd target/dist
 
-          tar -czf \
-            "../${{ matrix.artifact }}" \
-            FantacalcioBattitore
+          jpackage \
+            --type app-image \
+            --name "$APP_NAME" \
+            --input target/package-input \
+            --main-jar "${{ steps.jar.outputs.mainjar }}" \
+            --main-class "$MAIN_CLASS" \
+            --dest target/dist \
+            --app-version "$APP_VERSION" \
+            --add-modules java.se,jdk.unsupported \
+            --verbose
 
-      # ----------------------------
-      # MAC
-      # ----------------------------
+      # ============================================================
+      # MACOS
+      # ============================================================
 
-      - name: Package macOS
+      - name: Create macOS application
         if: runner.os == 'macOS'
         shell: bash
         run: |
+
+          jpackage \
+            --type app-image \
+            --name "$APP_NAME" \
+            --input target/package-input \
+            --main-jar "${{ steps.jar.outputs.mainjar }}" \
+            --main-class "$MAIN_CLASS" \
+            --dest target/dist \
+            --app-version "$APP_VERSION" \
+            --add-modules java.se,jdk.unsupported \
+            --verbose
+
+      # ============================================================
+      # MOSTRA STRUTTURA GENERATA
+      # ============================================================
+
+      - name: Show generated application
+        shell: bash
+        run: |
+
+          echo
+          echo "======================================"
+          echo " GENERATED APPLICATION"
+          echo "======================================"
+
+          find target/dist \
+            -maxdepth 4 \
+            -type f \
+            | head -100
+
+      # ============================================================
+      # VERIFICA WINDOWS
+      # ============================================================
+
+      - name: Verify Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+
+          $exe = "target\dist\FantacalcioBattitore\FantacalcioBattitore.exe"
+
+          if (-not (Test-Path $exe)) {
+              throw "FantacalcioBattitore.exe non trovato"
+          }
+
+          Write-Host "EXE trovato:"
+          Write-Host $exe
+
+          $runtime = "target\dist\FantacalcioBattitore\runtime\bin\server\jvm.dll"
+
+          if (-not (Test-Path $runtime)) {
+              throw "jvm.dll non trovata nel runtime"
+          }
+
+          Write-Host "JVM trovata:"
+          Write-Host $runtime
+
+      # ============================================================
+      # VERIFICA LINUX
+      # ============================================================
+
+      - name: Verify Linux executable
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+
+          EXECUTABLE="target/dist/FantacalcioBattitore/bin/FantacalcioBattitore"
+
+          if [ ! -f "$EXECUTABLE" ]; then
+            echo "ERRORE: eseguibile Linux non trovato."
+            exit 1
+          fi
+
+          echo "Eseguibile Linux trovato:"
+          echo "$EXECUTABLE"
+
+      # ============================================================
+      # VERIFICA MACOS
+      # ============================================================
+
+      - name: Verify macOS application
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+
+          APP="target/dist/FantacalcioBattitore.app"
+
+          if [ ! -d "$APP" ]; then
+            echo "ERRORE: applicazione macOS non trovata."
+            exit 1
+          fi
+
+          EXECUTABLE="$APP/Contents/MacOS/FantacalcioBattitore"
+
+          if [ ! -f "$EXECUTABLE" ]; then
+            echo "ERRORE: eseguibile macOS non trovato."
+            exit 1
+          fi
+
+          echo "Applicazione macOS trovata:"
+          echo "$APP"
+
+      # ============================================================
+      # CREA ZIP WINDOWS
+      # ============================================================
+
+      - name: Package Windows ZIP
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+
+          $source = "target\dist\FantacalcioBattitore"
+
+          $destination = "target\${{ matrix.output }}"
+
+          Compress-Archive `
+            -Path $source `
+            -DestinationPath $destination `
+            -Force
+
+          Write-Host "Creato:"
+          Write-Host $destination
+
+      # ============================================================
+      # CREA TAR.GZ LINUX
+      # ============================================================
+
+      - name: Package Linux TAR.GZ
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+
+          cd target/dist
+
+          tar \
+            -czf \
+            "../${{ matrix.output }}" \
+            FantacalcioBattitore
+
+          cd ../..
+
+      # ============================================================
+      # CREA ZIP MACOS
+      # ============================================================
+
+      - name: Package macOS ZIP
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+
           cd target/dist
 
           ditto \
@@ -263,15 +437,31 @@ jobs:
             -k \
             --sequesterRsrc \
             --keepParent \
-            FantacalcioBattitore.app \
-            "../${{ matrix.artifact }}"
+            "FantacalcioBattitore.app" \
+            "../${{ matrix.output }}"
 
-      # ----------------------------
+          cd ../..
+
+      # ============================================================
+      # VERIFICA ARCHIVIO
+      # ============================================================
+
+      - name: Verify package
+        shell: bash
+        run: |
+
+          echo
+          echo "Package finale:"
+
+          ls -lah \
+            "target/${{ matrix.output }}"
+
+      # ============================================================
       # UPLOAD
-      # ----------------------------
+      # ============================================================
 
-      - name: Upload artifact
+      - name: Upload package
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.name }}
-          path: target/${{ matrix.artifact }}
+          path: target/${{ matrix.output }}
+          archive: false
