@@ -1,3 +1,10 @@
+target/
+.idea/
+*.iml
+.DS_Store
+*.fasta
+
+
 # Compiled class file
 *.class
 
