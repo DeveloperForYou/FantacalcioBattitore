@@ -1,10 +1,15 @@
 package it.fantacalcio.battitore.service;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+import java.util.Random;
+import java.util.stream.Collectors;
+
 import it.fantacalcio.battitore.model.Player;
 import it.fantacalcio.battitore.model.PlayerStatus;
-
-import java.util.*;
-import java.util.stream.Collectors;
 
 public class AuctionService {
     public static final String ALL_ROLES = "Tutti";
@@ -87,6 +92,14 @@ public class AuctionService {
     public List<Player> getAvailable(String role) {
         return players.stream()
                 .filter(Player::isAvailable)
+                .filter(player -> matchesRole(player, role))
+                .filter(player -> player.getFvm() > 1)
+                .collect(Collectors.toList());
+    }
+
+    public List<Player> getAllByStatusAndRole(PlayerStatus status, String role) {
+        return players.stream()
+                .filter(player -> player.getStatus() == status)
                 .filter(player -> matchesRole(player, role))
                 .collect(Collectors.toList());
     }
