@@ -2,9 +2,12 @@ package it.fantacalcio.battitore.ui;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import it.fantacalcio.battitore.model.Player;
+import it.fantacalcio.battitore.model.PlayerStatus;
 import it.fantacalcio.battitore.service.AuctionService;
 import it.fantacalcio.battitore.service.AuctionStateService;
 import it.fantacalcio.battitore.service.FantacalcioExcelReader;
@@ -12,11 +15,14 @@ import it.fantacalcio.battitore.service.SpeechService;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Cursor;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
+import javafx.scene.control.ListView;
 import javafx.scene.control.Separator;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -35,11 +41,16 @@ public class MainView extends BorderPane {
     private final AuctionStateService stateService = new AuctionStateService();
 
     private final ComboBox<String> roleCombo = new ComboBox<>();
+
     private final Label fileLabel = new Label("Nessun listone caricato");
     private final Label playerName = new Label("CARICA IL LISTONE");
     private final Label playerRole = new Label("—");
     private final Label playerTeam = new Label("—");
-    private final Label statsLabel = new Label("Disponibili: 0   •   Aggiudicati: 0   •   Invenduti: 0");
+
+    private final Label availableStatsLabel = new Label("Disponibili: 0");
+    private final Label soldStatsLabel = new Label("Aggiudicati: 0");
+    private final Label unsoldStatsLabel = new Label("Invenduti: 0");
+
     private final Label statusLabel = new Label("Carica il file Excel di Fantacalcio.it per iniziare.");
 
     private final CheckBox readRole = new CheckBox("Leggi ruolo");
@@ -52,6 +63,7 @@ public class MainView extends BorderPane {
     private final Button replayUnsoldButton = new Button("Ripassa invenduti");
     private final Button saveStateButton = new Button("Salva stato");
     private final Button loadStateButton = new Button("Carica stato");
+    private final Button viewAllPlayersButton = new Button("Visualizza Listone Caricato");
 
     private File loadedExcelFile;
 
@@ -102,9 +114,21 @@ public class MainView extends BorderPane {
         playerName.setId("player-name");
         playerRole.setId("player-role");
         playerTeam.setId("player-team");
-        statsLabel.setId("stats-label");
 
-        VBox card = new VBox(10, playerName, playerRole, playerTeam, statsLabel);
+        configureClickableStatsLabel(availableStatsLabel);
+        configureClickableStatsLabel(soldStatsLabel);
+        configureClickableStatsLabel(unsoldStatsLabel);
+
+        HBox statsBox = new HBox(
+                18,
+                availableStatsLabel,
+                soldStatsLabel,
+                unsoldStatsLabel
+        );
+        statsBox.setAlignment(Pos.CENTER);
+        statsBox.setId("stats-label");
+
+        VBox card = new VBox(10, playerName, playerRole, playerTeam, statsBox);
         card.setAlignment(Pos.CENTER);
         card.setPadding(new Insets(40));
         card.setMaxWidth(Double.MAX_VALUE);
@@ -113,6 +137,14 @@ public class MainView extends BorderPane {
         VBox.setVgrow(card, Priority.ALWAYS);
 
         return card;
+    }
+
+    private void configureClickableStatsLabel(Label label) {
+        label.setCursor(Cursor.HAND);
+        label.setUnderline(false);
+
+        label.setOnMouseEntered(event -> label.setUnderline(true));
+        label.setOnMouseExited(event -> label.setUnderline(false));
     }
 
     private Pane buildBottom() {
@@ -124,7 +156,7 @@ public class MainView extends BorderPane {
         HBox auctionButtons = new HBox(14, repeatButton, unsoldButton, soldButton, nextButton);
         auctionButtons.setAlignment(Pos.CENTER);
 
-        HBox utilityButtons = new HBox(10, replayUnsoldButton, saveStateButton, loadStateButton);
+        HBox utilityButtons = new HBox(10, viewAllPlayersButton, replayUnsoldButton, saveStateButton, loadStateButton);
         utilityButtons.setAlignment(Pos.CENTER_LEFT);
 
         statusLabel.setId("status-label");
@@ -141,6 +173,15 @@ public class MainView extends BorderPane {
             updateStats();
             updateControls();
         });
+
+        availableStatsLabel.setOnMouseClicked(event ->
+                showPlayersByStatus("Giocatori disponibili", PlayerStatus.AVAILABLE));
+
+        soldStatsLabel.setOnMouseClicked(event ->
+                showPlayersByStatus("Giocatori aggiudicati", PlayerStatus.SOLD));
+
+        unsoldStatsLabel.setOnMouseClicked(event ->
+                showPlayersByStatus("Giocatori invenduti", PlayerStatus.UNSOLD));
 
         repeatButton.setOnAction(event -> speakCurrent());
 
@@ -179,14 +220,15 @@ public class MainView extends BorderPane {
 
         saveStateButton.setOnAction(event -> saveState());
         loadStateButton.setOnAction(event -> loadState());
+        viewAllPlayersButton.setOnAction(event -> showAllPlayersWithStatus("Listone completo"));
     }
 
     private void chooseExcelFile() {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Seleziona il listone Fantacalcio");
         chooser.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("File Excel", "*.xlsx", "*.xls"),
-                new FileChooser.ExtensionFilter("Tutti i file", "*.*")
+                new FileChooser.ExtensionFilter("File Excel", "*.xlsx", "*.xls")
+                //,new FileChooser.ExtensionFilter("Tutti i file", "*.*")
         );
 
         File file = chooser.showOpenDialog(stage);
@@ -203,6 +245,7 @@ public class MainView extends BorderPane {
             showNoCurrentPlayer();
             updateStats();
             updateControls();
+            roleCombo.setValue("P");
         } catch (Exception ex) {
             showError("Errore lettura listone", ex.getMessage());
         }
@@ -243,11 +286,116 @@ public class MainView extends BorderPane {
 
     private void updateStats() {
         String role = selectedRole();
-        statsLabel.setText(
-                "Disponibili: " + auction.countAvailable(role)
-                        + "   •   Aggiudicati: " + auction.countSold()
-                        + "   •   Invenduti: " + auction.countUnsold(role)
-        );
+
+        availableStatsLabel.setText("Disponibili: " + countPlayersByStatus(PlayerStatus.AVAILABLE, role));
+        soldStatsLabel.setText("Aggiudicati: " + countPlayersByStatus(PlayerStatus.SOLD, role));
+        unsoldStatsLabel.setText("Invenduti: " + countPlayersByStatus(PlayerStatus.UNSOLD, role));
+    }
+
+    private int countPlayersByStatus(PlayerStatus status, String role) {
+        return (int) auction.getPlayers().stream()
+                .filter(player -> player.getStatus() == status)
+                .filter(player -> matchesRole(player, role))
+                .count();
+    }
+
+    private void showPlayersByStatus(String title, PlayerStatus status) {
+        String role = selectedRole();
+
+        if(role.equalsIgnoreCase(AuctionService.ALL_ROLES)){
+            return;
+        }
+
+        List<Player> players = auction.getAllByStatusAndRole(status, role);
+
+        if(players == null || players.isEmpty()) {
+            return;
+        }
+        
+        players.sort(Comparator.comparing(Player::getFvm).reversed());
+
+        ListView<Player> listView = new ListView<>();
+        listView.getItems().setAll(players);
+        listView.setPrefWidth(520);
+        listView.setPrefHeight(460);
+
+        listView.setCellFactory(view -> new ListCell<>() {
+            @Override
+            protected void updateItem(Player player, boolean empty) {
+                super.updateItem(player, empty);
+
+                if (empty || player == null) {
+                    setText(null);
+                    return;
+                }
+
+                setText(player.getName()
+                        + "   •   " + player.getRole()
+                        + "   •   " + player.getTeam()
+                        + "   •   " + player.getFvm());
+            }
+        });
+
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.initOwner(stage);
+        alert.setTitle(title);
+        alert.setHeaderText(title + " (" + players.size() + ")"
+                + (AuctionService.ALL_ROLES.equalsIgnoreCase(role) ? " "+AuctionService.ALL_ROLES : " - Ruolo " + role));
+        alert.setContentText(null);
+        alert.getDialogPane().setContent(listView);
+        alert.setResizable(true);
+        alert.showAndWait();
+    }
+
+    private void showAllPlayersWithStatus(String title) {
+
+        List<Player> players = auction.getPlayers().stream().collect(Collectors.toList());
+
+        if(players == null || players.isEmpty()) {
+            return;
+        }
+
+        players.sort(Comparator.comparing(Player::getRole).reversed().thenComparing(Player::getFvm).reversed());
+        
+        ListView<Player> listView = new ListView<>();
+        listView.getItems().setAll(players);
+        listView.setPrefWidth(520);
+        listView.setPrefHeight(460);
+
+        listView.setCellFactory(view -> new ListCell<>() {
+            @Override
+            protected void updateItem(Player player, boolean empty) {
+                super.updateItem(player, empty);
+
+                if (empty || player == null) {
+                    setText(null);
+                    return;
+                }
+
+                setText(player.getName()
+                        + "   •   " + player.getRole()
+                        + "   •   " + player.getTeam()
+                        + "   •   " + player.getFvm()
+                        + "   •   " + player.getStatus().name());
+            }
+        });
+
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.initOwner(stage);
+        alert.setTitle(title);
+        alert.setHeaderText(title + " (" + players.size() + ") " + " - Ruolo " + AuctionService.ALL_ROLES);
+        alert.setContentText(null);
+        alert.getDialogPane().setContent(listView);
+        alert.setResizable(true);
+        alert.showAndWait();
+    }
+
+
+    private boolean matchesRole(Player player, String role) {
+        return role == null
+                || role.isBlank()
+                || AuctionService.ALL_ROLES.equalsIgnoreCase(role)
+                || player.getRole().equalsIgnoreCase(role);
     }
 
     private void updateControls() {
@@ -261,6 +409,7 @@ public class MainView extends BorderPane {
         replayUnsoldButton.setDisable(!hasPlayers || auction.countUnsold(selectedRole()) == 0);
         saveStateButton.setDisable(!hasPlayers);
         loadStateButton.setDisable(!hasPlayers);
+        viewAllPlayersButton.setDisable(!hasPlayers);
     }
 
     private void saveState() {
