@@ -13,7 +13,6 @@ permissions:
 env:
   APP_NAME: FantacalcioBattitore
   MAIN_CLASS: it.fantacalcio.battitore.Launcher
-  APP_VERSION: 1.0.0
 
 jobs:
 
@@ -91,6 +90,23 @@ jobs:
           echo "======================================"
 
           jpackage --version
+
+
+      # ============================================================
+      # GET VERSION FROM PROJECT POM.XML
+      # ============================================================
+      
+      - name: Get version from POM
+        id: get-version
+        shell: bash
+        run: |
+
+          APP_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+
+          echo "Versione del progetto:"
+          echo "$APP_VERSION"
+
+          echo "appversion=$APP_VERSION" >> "$GITHUB_OUTPUT"
 
       # ============================================================
       # MAVEN BUILD
@@ -247,7 +263,7 @@ jobs:
             --main-jar "${{ steps.jar.outputs.mainjar }}" \
             --main-class "$MAIN_CLASS" \
             --dest target/dist \
-            --app-version "$APP_VERSION" \
+            --app-version "${{steps.get-version.outputs.appversion}}" \
             --add-modules java.se,jdk.unsupported \
             --win-console \
             --verbose
@@ -268,7 +284,7 @@ jobs:
             --main-jar "${{ steps.jar.outputs.mainjar }}" \
             --main-class "$MAIN_CLASS" \
             --dest target/dist \
-            --app-version "$APP_VERSION" \
+            --app-version "${{steps.get-version.outputs.appversion}}" \
             --add-modules java.se,jdk.unsupported \
             --verbose
 
@@ -288,7 +304,7 @@ jobs:
             --main-jar "${{ steps.jar.outputs.mainjar }}" \
             --main-class "$MAIN_CLASS" \
             --dest target/dist \
-            --app-version "$APP_VERSION" \
+            --app-version "${{steps.get-version.outputs.appversion}}" \
             --add-modules java.se,jdk.unsupported \
             --verbose
 
