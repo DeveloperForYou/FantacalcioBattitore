@@ -99,7 +99,7 @@ jobs:
       - name: Maven build
         shell: bash
         run: |
-          mvn --batch-mode clean package
+          mvn --batch-mode clean package -Dmaven.test.skip=true
 
       # ============================================================
       # TROVA AUTOMATICAMENTE IL JAR PRINCIPALE

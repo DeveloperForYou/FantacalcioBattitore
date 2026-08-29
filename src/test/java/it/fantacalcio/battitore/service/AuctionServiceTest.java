@@ -1,13 +1,13 @@
 package it.fantacalcio.battitore.service;
 
-import it.fantacalcio.battitore.model.Player;
-import it.fantacalcio.battitore.model.PlayerStatus;
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
 import java.util.Random;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import org.junit.jupiter.api.Test;
+
+import it.fantacalcio.battitore.model.Player;
+import it.fantacalcio.battitore.model.PlayerStatus;
 
 class AuctionServiceTest {
 
@@ -54,6 +54,6 @@ class AuctionServiceTest {
     }
 
     private Player player(int id, String role, String name) {
-        return new Player(id, role, "", name, "TEST", 0, 0, 0);
+        return new Player(id, role, "", name, "TEST", 0, 0, 5);
     }
 }
