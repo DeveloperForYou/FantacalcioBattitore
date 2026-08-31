@@ -3,7 +3,10 @@ package it.fantacalcio.battitore.ui;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import it.fantacalcio.battitore.model.Player;
@@ -17,7 +20,9 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Cursor;
 import javafx.scene.control.Alert;
+import javafx.scene.control.Alert.AlertType;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -314,37 +319,91 @@ public class MainView extends BorderPane {
         
         players.sort(Comparator.comparing(Player::getFvm).reversed());
 
+        Set<Player> selectedPlayers = new HashSet<>();
+
         ListView<Player> listView = new ListView<>();
         listView.getItems().setAll(players);
         listView.setPrefWidth(520);
         listView.setPrefHeight(460);
 
         listView.setCellFactory(view -> new ListCell<>() {
+            private final CheckBox checkBox = new CheckBox();
+            private final Label label = new Label();
+            private final HBox content = new HBox(10, checkBox, label);
+            {
+                content.setAlignment(Pos.CENTER_LEFT);
+
+                checkBox.setOnAction(event -> {
+                    Player player = getItem();
+
+                    if (player == null) {
+                        return;
+                    }
+
+                    if (checkBox.isSelected()) {
+                        selectedPlayers.add(player);
+                    } else {
+                        selectedPlayers.remove(player);
+                    }
+                });
+            }
+
             @Override
             protected void updateItem(Player player, boolean empty) {
                 super.updateItem(player, empty);
 
                 if (empty || player == null) {
                     setText(null);
+                    setGraphic(null);
                     return;
                 }
 
-                setText(player.getName()
+                label.setText(
+                        player.getName()
                         + "   •   " + player.getRole()
                         + "   •   " + player.getTeam()
-                        + "   •   " + player.getFvm());
+                        + "   •   " + player.getFvm()
+                );
+
+                checkBox.setSelected(selectedPlayers.contains(player));
+
+                setText(null);
+                setGraphic(content);
             }
         });
 
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        Alert alert = new Alert(AlertType.INFORMATION);
         alert.initOwner(stage);
         alert.setTitle(title);
-        alert.setHeaderText(title + " (" + players.size() + ")"
-                + (AuctionService.ALL_ROLES.equalsIgnoreCase(role) ? " "+AuctionService.ALL_ROLES : " - Ruolo " + role));
+        alert.setHeaderText(title + " (" + players.size() + ")" + ( " - Ruolo " + role) + ( " - Stato " + status.name()));
         alert.setContentText(null);
         alert.getDialogPane().setContent(listView);
         alert.setResizable(true);
         alert.showAndWait();
+        if(status != PlayerStatus.AVAILABLE){
+            if(!selectedPlayers.isEmpty()){
+                ListView<Player> listViewSel = new ListView<>();
+                listViewSel.getItems().setAll(selectedPlayers);
+                listViewSel.setPrefWidth(520);
+                listViewSel.setPrefHeight(460);
+                Alert alert1 = new Alert(AlertType.CONFIRMATION,"",ButtonType.YES,ButtonType.NO);
+                alert1.initOwner(stage);
+                alert1.setTitle("Vuoi rimettere in gioco i giocatori selezionati?");
+                alert1.setHeaderText(title + " (" + selectedPlayers.size() + ")" + ( " - Ruolo " + role) + ( " - Stato " + status.name()));
+                alert1.setContentText(null);
+                alert1.getDialogPane().setContent(listViewSel);
+                alert1.setResizable(true);
+                Optional<ButtonType> result = alert1.showAndWait();
+                if(result.isPresent() && result.get() == ButtonType.YES){
+                    for(Player player : selectedPlayers){
+                        player.setStatus(PlayerStatus.AVAILABLE);
+                    }
+                    statusLabel.setText("Rimessi in gioco " + selectedPlayers.size() + " giocatori.");
+                    updateStats();
+                    updateControls();
+                }
+            }
+        }
     }
 
     private void showAllPlayersWithStatus(String title) {
@@ -355,7 +414,7 @@ public class MainView extends BorderPane {
             return;
         }
 
-        players.sort(Comparator.comparing(Player::getRole).reversed().thenComparing(Player::getFvm).reversed());
+        players.sort(Comparator.comparing(Player::getRole).thenComparing(Player::getFvm).reversed());
         
         ListView<Player> listView = new ListView<>();
         listView.getItems().setAll(players);
