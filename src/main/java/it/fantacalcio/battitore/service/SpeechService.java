@@ -17,12 +17,6 @@ public class SpeechService implements AutoCloseable {
         return thread;
     });
 
-    public boolean isMac() {
-        return System.getProperty("os.name", "")
-                .toLowerCase(Locale.ROOT)
-                .contains("mac");
-    }
-
     public void speak(Player player, boolean includeRole, boolean includeTeam) {
         if (player == null) {
             return;

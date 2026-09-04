@@ -69,6 +69,7 @@ public class MainView extends BorderPane {
     private final Button saveStateButton = new Button("Salva stato");
     private final Button loadStateButton = new Button("Carica stato");
     private final Button viewAllPlayersButton = new Button("Visualizza Listone Caricato");
+    private final Button manualCallButton = new Button("Chiamata manuale giocatori");
 
     private File loadedExcelFile;
 
@@ -103,7 +104,8 @@ public class MainView extends BorderPane {
                 new Label("Ruolo:"),
                 roleCombo,
                 readRole,
-                readTeam
+                readTeam,
+                manualCallButton
         );
         controls.setAlignment(Pos.CENTER_LEFT);
 
@@ -125,10 +127,10 @@ public class MainView extends BorderPane {
         configureClickableStatsLabel(unsoldStatsLabel);
 
         HBox statsBox = new HBox(
-                18,
-                availableStatsLabel,
-                soldStatsLabel,
-                unsoldStatsLabel
+            18,
+            availableStatsLabel,
+            soldStatsLabel,
+            unsoldStatsLabel
         );
         statsBox.setAlignment(Pos.CENTER);
         statsBox.setId("stats-label");
@@ -179,14 +181,11 @@ public class MainView extends BorderPane {
             updateControls();
         });
 
-        availableStatsLabel.setOnMouseClicked(event ->
-                showPlayersByStatus("Giocatori disponibili", PlayerStatus.AVAILABLE));
+        availableStatsLabel.setOnMouseClicked(event -> showPlayersByStatus("Giocatori disponibili", PlayerStatus.AVAILABLE));
 
-        soldStatsLabel.setOnMouseClicked(event ->
-                showPlayersByStatus("Giocatori aggiudicati", PlayerStatus.SOLD));
+        soldStatsLabel.setOnMouseClicked(event -> showPlayersByStatus("Giocatori aggiudicati", PlayerStatus.SOLD));
 
-        unsoldStatsLabel.setOnMouseClicked(event ->
-                showPlayersByStatus("Giocatori invenduti", PlayerStatus.UNSOLD));
+        unsoldStatsLabel.setOnMouseClicked(event -> showPlayersByStatus("Giocatori invenduti", PlayerStatus.UNSOLD));
 
         repeatButton.setOnAction(event -> speakCurrent());
 
@@ -226,6 +225,7 @@ public class MainView extends BorderPane {
         saveStateButton.setOnAction(event -> saveState());
         loadStateButton.setOnAction(event -> loadState());
         viewAllPlayersButton.setOnAction(event -> showAllPlayersWithStatus("Listone completo"));
+        manualCallButton.setOnAction(event -> showManualCallPlayer());
     }
 
     private void chooseExcelFile() {
@@ -333,6 +333,10 @@ public class MainView extends BorderPane {
             {
                 content.setAlignment(Pos.CENTER_LEFT);
 
+                if(status == PlayerStatus.AVAILABLE){
+                    checkBox.setVisible(false);
+                }
+
                 checkBox.setOnAction(event -> {
                     Player player = getItem();
 
@@ -406,6 +410,107 @@ public class MainView extends BorderPane {
         }
     }
 
+    private void showManualCallPlayer() {
+        String role = selectedRole();
+        String title = "Chiamata manuale giocatori";
+
+        if(role.equalsIgnoreCase(AuctionService.ALL_ROLES)){
+            return;
+        }
+
+        List<Player> players = auction.getAllByStatusAndRole(PlayerStatus.AVAILABLE, role);
+
+        if(players == null || players.isEmpty()) {
+            return;
+        }
+        
+        players.sort(Comparator.comparing(Player::getFvm).reversed());
+
+        Set<Player> selectedPlayers = new HashSet<>();
+
+        ListView<Player> listView = new ListView<>();
+        listView.getItems().setAll(players);
+        listView.setPrefWidth(520);
+        listView.setPrefHeight(460);
+
+        listView.setCellFactory(view -> new ListCell<>() {
+            private final CheckBox checkBox = new CheckBox();
+            private final Label label = new Label();
+            private final HBox content = new HBox(10, checkBox, label);
+            {
+                content.setAlignment(Pos.CENTER_LEFT);
+
+                checkBox.setOnAction(event -> {
+                    Player player = getItem();
+
+                    if (player == null) {
+                        return;
+                    }
+
+                    if (checkBox.isSelected()) {
+                        if (!selectedPlayers.isEmpty() && !selectedPlayers.contains(player)) {
+                            Alert alert = new Alert(AlertType.ERROR);
+                            alert.initOwner(stage);
+                            alert.setTitle("Selezione giocatori");
+                            alert.setHeaderText("Puoi selezionare un solo giocatore alla volta.");
+                            alert.showAndWait();
+
+                            checkBox.setSelected(false);
+                            return;
+                        }
+                        selectedPlayers.add(player);
+                    } else {
+                        selectedPlayers.remove(player);
+                    }
+                });
+            }
+
+            @Override
+            protected void updateItem(Player player, boolean empty) {
+                super.updateItem(player, empty);
+
+                if (empty || player == null) {
+                    setText(null);
+                    setGraphic(null);
+                    return;
+                }
+
+                label.setText(
+                        player.getName()
+                        + "   •   " + player.getRole()
+                        + "   •   " + player.getTeam()
+                        + "   •   " + player.getFvm()
+                );
+
+                checkBox.setSelected(selectedPlayers.contains(player));
+
+                setText(null);
+                setGraphic(content);
+            }
+        });
+
+        Alert alert = new Alert(AlertType.INFORMATION);
+        alert.initOwner(stage);
+        alert.setTitle("");
+        alert.setHeaderText(title + " (" + players.size() + ")" + ( " - Ruolo " + role));
+        alert.setContentText(null);
+        alert.getDialogPane().setContent(listView);
+        alert.setResizable(true);
+        alert.showAndWait();
+        
+        if(!selectedPlayers.isEmpty()){
+            Player selected = selectedPlayers.iterator().next();
+            if(selected != null){ 
+                showPlayer(selected);
+                auction.setCurrentPlayer(selected);
+                statusLabel.setText("Giocatore selezionato manualmente. AGGIUDICATO lo rimuove; PROSSIMO lo considera invenduto e passa oltre.");
+                updateStats();
+                updateControls();
+                speakCurrent();
+            }
+        }  
+    }
+
     private void showAllPlayersWithStatus(String title) {
 
         List<Player> players = auction.getPlayers().stream().collect(Collectors.toList());
@@ -449,7 +554,6 @@ public class MainView extends BorderPane {
         alert.showAndWait();
     }
 
-
     private boolean matchesRole(Player player, String role) {
         return role == null
                 || role.isBlank()
@@ -461,6 +565,11 @@ public class MainView extends BorderPane {
         boolean hasPlayers = !auction.getPlayers().isEmpty();
         boolean hasCurrent = auction.getCurrentPlayer() != null;
 
+        roleCombo.setDisable(!hasPlayers);
+
+        readRole.setDisable(!hasPlayers);
+        readTeam.setDisable(!hasPlayers);
+    
         nextButton.setDisable(!hasPlayers || auction.countAvailable(selectedRole()) == 0);
         repeatButton.setDisable(!hasCurrent);
         soldButton.setDisable(!hasCurrent);
@@ -469,6 +578,7 @@ public class MainView extends BorderPane {
         saveStateButton.setDisable(!hasPlayers);
         loadStateButton.setDisable(!hasPlayers);
         viewAllPlayersButton.setDisable(!hasPlayers);
+        manualCallButton.setDisable(!hasPlayers);
     }
 
     private void saveState() {
@@ -479,7 +589,7 @@ public class MainView extends BorderPane {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Salva stato asta");
         chooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("Stato Battitore", "*.fasta")
+            new FileChooser.ExtensionFilter("Stato Battitore", "*.fasta")
         );
         chooser.setInitialFileName(defaultStateFileName());
 

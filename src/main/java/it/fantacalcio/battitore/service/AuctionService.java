@@ -112,6 +112,10 @@ public class AuctionService {
         return currentPlayer;
     }
 
+    public void setCurrentPlayer(Player currentPlayer) {
+        this.currentPlayer = currentPlayer;
+    }
+
     private boolean matchesRole(Player player, String role) {
         return role == null
                 || role.isBlank()
